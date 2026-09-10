@@ -19,7 +19,7 @@ def main():
 
     result = {"n": len(m), "kappa": {}}
     for dim in ["groundedness", "helpfulness", "correctness", "tone", "overall"]:
-        jc, hc = f"{dim}_judge", f"{dim}_human"
+        jc, hc = dim, f"{dim}_human"
         if jc in m and hc in m:
             result["kappa"][dim] = float(
                 cohen_kappa_score(m[jc].astype(int), m[hc].astype(int), weights="quadratic")

@@ -1,551 +1,375 @@
-# \# Hiver SDE Intern — AI Customer Support Agent
+# Hiver SDE Intern — AI Customer Support Agent
 
-# 
+## 1. Executive Summary
 
-# \## 1. Executive summary
+**Selected brand:** AmazonHelp
 
-# 
+**Headline result:** **86.96% escalation recall**
 
-# \*\*Selected brand:\*\* AmazonHelp
+The system classifies incoming AmazonHelp customer cases into 10 support intents, retrieves similar historical support interactions using TF-IDF, generates a grounded response with an LLM, and applies deterministic safety/routing checks to decide whether to auto-handle or escalate.
 
-# 
+On the 180-case hand-labelled golden set, the system achieved **55.00% intent accuracy**, **56.11% intent macro-F1**, and **86.96% escalation recall**, with a **13.04% false auto-handle rate**.
 
-# \*\*Headline result:\*\* \*\*86.96% escalation recall\*\*
+### Trust takeaway
 
-# 
+The system is better suited to **assisted support and conservative triage** than unrestricted autonomous resolution. Its strongest property is identifying cases that should receive human attention, while intent classification and safe auto-handling still have meaningful failure modes.
 
-# The system classifies incoming AmazonHelp customer cases into 10 support intents, retrieves similar historical support interactions using TF-IDF, generates a grounded response with an LLM, and applies deterministic safety/routing checks to decide whether to auto-handle or escalate.
+## 2. Problem Framing
 
-# 
+### Why this is difficult
 
-# On the 180-case hand-labelled golden set, the system achieved \*\*55.00% intent accuracy\*\*, \*\*56.11% intent macro-F1\*\*, and \*\*86.96% escalation recall\*\*, with a \*\*13.04% false auto-handle rate\*\*.
+- TWCS contains noisy, informal, multilingual and multi-turn customer conversations.
+- Historical support resolutions may be incomplete or inconsistent.
+- A fluent response is not necessarily a grounded or safe response.
+- Auto-handling has asymmetric risk: an incorrect confident answer can be worse than escalating to a human.
 
-# 
+### Data
 
-# \### Trust takeaway
+| Item | Value |
+|---|---:|
+| Source | Customer Support on Twitter (TWCS) |
+| Selected brand | AmazonHelp |
+| Raw TWCS rows | 2,811,774 |
+| Reconstructed AmazonHelp cases | 168,814 |
+| Golden set | 180 hand-labelled cases |
+| Maximum context | 6 turns |
+| Mean context | 2.49 turns |
+| Median context | 1 turn |
 
-# 
+Cases were sampled using diversity-aware sampling rather than simply taking the first 180 rows.
 
-# The system is better suited to \*\*assisted support and conservative triage\*\* than unrestricted autonomous resolution. Its strongest property is identifying cases that should receive human attention, while intent classification and safe auto-handling still have meaningful failure modes.
+The golden labels were manually assigned using `eval/LABELING_GUIDE.md`.
 
-# 
+## 3. System Design
 
-# \---
+```text
+Incoming customer message
+        |
+        v
+Conversation context reconstruction
+        |
+        v
+Intent classification
+        |
+        v
+TF-IDF historical retrieval
+        |
+        v
+Evidence consistency + risk checks
+        |
+        v
+Grounded LLM response
+        |
+        v
+Trust + routing decision
+        |
+        v
+AUTO-HANDLE / ESCALATE
+```
 
-# 
+The design separates:
 
-# \## 2. Problem framing
+1. **Intent:** What is the customer's problem?
+2. **Resolution confidence:** Can the problem be safely resolved with the evidence available to the system?
 
-# 
+This is important because a message can have a clear intent while still requiring private order, account, payment, or carrier information.
 
-# \### Why this is difficult
+## 4. Intent Taxonomy
 
-# 
+| Intent | Definition | Count |
+|---|---|---:|
+| `order_issue` | Order problems, missing/wrong items, or order-specific handling | 12 |
+| `delivery_issue` | Delivery delays, failures, carrier/address problems, or delivery charges | 44 |
+| `package_not_received` | Package marked/determined delivered but not received | 11 |
+| `return_cancellation` | Returns or cancellation requests/problems | 4 |
+| `refund_payment` | Refunds, charges, billing, or payment problems | 12 |
+| `prime_subscription` | Prime membership, charges, or benefits | 13 |
+| `account_issue` | Account access, state, or management problems | 20 |
+| `product_technical_issue` | Faulty products, technical failures, or troubleshooting | 23 |
+| `complaint_followup` | Repeated contact, unresolved support, or follow-up requests | 19 |
+| `other` | Cases outside the above categories | 22 |
 
-# \* TWCS contains noisy, informal, multilingual and multi-turn customer conversations.
+## 5. Retrieval, Generation, and Routing
 
-# \* Historical support resolutions may be incomplete or inconsistent.
+### Retrieval
 
-# \* A fluent response is not necessarily a grounded or safe response.
+Historical support examples are retrieved with TF-IDF over the latest customer text and conversation context using word unigrams and bigrams.
 
-# \* Auto-handling has asymmetric risk: an incorrect confident answer can be worse than escalating to a human.
+The current case is excluded from its own retrieval candidates to reduce trivial self-retrieval leakage.
 
-# 
+### Generation
 
-# \### Data
+The LLM receives the customer message, conversation context, and retrieved historical support examples and generates a grounded customer-facing response.
 
-# 
+The final implementation uses Groq:
 
-# \* \*\*Source:\*\* Customer Support on Twitter (TWCS)
+```text
+LLM_PROVIDER=groq
+GROQ_MODEL=openai/gpt-oss-20b
+```
 
-# \* \*\*Selected brand:\*\* AmazonHelp
+### Routing
 
-# \* \*\*Raw TWCS rows:\*\* 2,811,774 tweets
+Routing combines model confidence, retrieval quality, evidence consistency, and deterministic safety checks.
 
-# \* \*\*Reconstructed AmazonHelp cases:\*\* 168,814
+Configured thresholds:
 
-# \* \*\*Golden set:\*\* 180 hand-labelled cases
+| Parameter | Value |
+|---|---:|
+| Minimum trust for auto-handling | 0.62 |
+| Maximum risk for auto-handling | 0.45 |
+| Minimum retrieval evidence items | 2 |
+| Strong retrieval score | 0.45 |
+| Minimum retrieval score | 0.18 |
 
-# \* \*\*Context window:\*\* up to 6 turns; mean 2.49 turns per reconstructed case
+High-risk signals include hacked/unauthorized accounts, fraud, chargebacks, legal threats, danger, injury, and similar language.
 
-# \* \*\*Sampling:\*\* diversity-aware sampling rather than taking the first N cases
+The system intentionally favors escalation when evidence is weak or the situation is unsafe to resolve automatically.
 
-# \* \*\*Golden labels:\*\* manually assigned intent and escalation decisions using `eval/LABELING\_GUIDE.md`
+## 6. Evaluation Methodology
 
-# 
+The final evaluation uses **180 hand-labelled cases**, within the required 150–250 case range.
 
-# The reconstructed case unit is a customer-support interaction rather than an individual tweet. This preserves conversation context needed for intent and escalation decisions.
+### Golden-set distribution
 
-# 
+| Intent | Cases |
+|---|---:|
+| delivery_issue | 44 |
+| product_technical_issue | 23 |
+| other | 22 |
+| account_issue | 20 |
+| complaint_followup | 19 |
+| prime_subscription | 13 |
+| order_issue | 12 |
+| refund_payment | 12 |
+| package_not_received | 11 |
+| return_cancellation | 4 |
+| **Total** | **180** |
 
-# \---
+Escalation labels:
 
-# 
+- Gold escalation: 92
+- Gold non-escalation: 88
 
-# \## 3. System
+The retriever excludes the current case from candidate evidence to reduce leakage.
 
-# 
+## 7. Baselines
 
-# ```text
+Three simple baselines were evaluated on a stratified holdout of 36 cases.
 
-# Incoming customer message
+| System | Accuracy | Macro-F1 | Escalation Recall |
+|---|---:|---:|---:|
+| Majority | 25.00% | 4.00% | 0.00% |
+| Keyword | 27.78% | 21.64% | 0.00% |
+| TF-IDF + Logistic Regression | 19.44% | 18.28% | 0.00% |
 
-# &#x20;       ↓
+The baselines defaulted to non-escalation. Their zero escalation recall is therefore not evidence of safety.
 
-# Conversation context
+## 8. Final Agent Results
 
-# &#x20;       ↓
+| Metric | Result |
+|---|---:|
+| Intent accuracy | **55.00%** |
+| Intent macro-F1 | **56.11%** |
+| Escalation precision | **60.61%** |
+| Escalation recall | **86.96%** |
+| Escalation F1 | **71.43%** |
+| False auto-handles | **12 / 92** |
+| False auto-handle rate | **13.04%** |
+| Intent ECE | **0.136** |
 
-# Intent classifier / LLM
+The system escalated 132 of 180 evaluated cases and auto-handled 48.
 
-# &#x20;       ↓
+The headline strength is high escalation recall, but the 12 false auto-handles demonstrate that conservative routing is not yet sufficient for unrestricted autonomous support.
 
-# TF-IDF historical retrieval
+## 9. LLM Judge and Human Validation
 
-# &#x20;       ↓
+A separate LLM judge evaluated 30 generated responses using five dimensions:
 
-# Evidence consistency + risk checks
+- groundedness
+- helpfulness
+- correctness
+- tone
+- overall quality
 
-# &#x20;       ↓
+### LLM-judge descriptive results
 
-# Grounded LLM draft
+| Dimension | Mean |
+|---|---:|
+| Groundedness | 3.70 / 5 |
+| Helpfulness | 3.33 / 5 |
+| Correctness | 4.80 / 5 |
+| Tone | 4.23 / 5 |
+| Overall | 3.70 / 5 |
 
-# &#x20;       ↓
+### Human validation
 
-# Trust / routing checks
+A manually rated 10-case validation subset was compared with the LLM-judge ratings using quadratic weighted Cohen's kappa.
 
-# &#x20;       ↓
+| Dimension | Kappa |
+|---|---:|
+| Groundedness | 0.123 |
+| Helpfulness | 0.565 |
+| Correctness | 0.370 |
+| Tone | 0.556 |
+| Overall | 0.556 |
 
-# AUTO-HANDLE / ESCALATE + reason
+The agreement varies by dimension. Groundedness agreement is weak, while helpfulness, tone, and overall quality show moderate agreement on this small sample.
 
-# ```
+Because the human validation sample contains only 10 cases, these values should be treated as diagnostic rather than definitive evidence of judge reliability.
 
-# 
+Artifacts:
 
-# \### Intent taxonomy
+- `results/judge_30_retry.csv`
+- `eval/HUMAN_JUDGE_FORM.csv`
+- `results/judge_agreement_10.csv`
 
-# 
+## 10. Top Five Failure Modes
 
-# | Intent                    | Definition                                                                           | Golden count |
+### Failure 1 — Ongoing issue hidden in conversation context
 
-# | ------------------------- | ------------------------------------------------------------------------------------ | -----------: |
+**Examples:** `twcs_273`, `twcs_3752`, `twcs_3754`, `twcs_3755`
 
-# | `order\_issue`             | Problems with an order, missing/wrong items, or order-specific handling              |           12 |
+`twcs_273` describes a Fire TV Stick issue that remained unresolved after phone support and mentions that the warranty had expired.
 
-# | `delivery\_issue`          | Delays, delivery failures, carrier/address problems, or delivery charges             |           44 |
+**Observed behavior:** The intent was correctly classified as a product technical issue, but routing could still be too permissive.
 
-# | `package\_not\_received`    | Customer reports that a package was marked/determined delivered but was not received |           11 |
+**Hypothesis:** The strongest escalation signal can be distributed across conversation history instead of appearing in the latest message.
 
-# | `return\_cancellation`     | Requests or problems involving returns or cancelling an order                        |            4 |
+**Fix:** Add an explicit persistence/context-summary feature to routing.
 
-# | `refund\_payment`          | Refunds, charges, billing or payment-related problems                                |           12 |
+### Failure 2 — Order-specific investigation
 
-# | `prime\_subscription`      | Prime membership, Prime charges, or Prime-related benefits                           |           13 |
+**Examples:** `twcs_663`, `twcs_1723`, `twcs_1725`, `twcs_3722`
 
-# | `account\_issue`           | Account access, account state, or account-management problems                        |           20 |
+`twcs_663` describes a delivery-charge problem requiring order-specific investigation.
 
-# | `product\_technical\_issue` | Faulty products, technical failures, or troubleshooting issues                       |           23 |
+**Observed behavior:** Historical similarity can make the case appear answerable.
 
-# | `complaint\_followup`      | Repeated contact, unresolved support interactions, or follow-up requests             |           19 |
+**Hypothesis:** Retrieval cannot establish private customer-specific order state.
 
-# | `other`                   | Cases that do not fit the above support categories                                   |           22 |
+**Fix:** Add a `requires_account_or_order_lookup` signal that forces escalation.
 
-# 
+### Failure 3 — Sparse delivery-investigation language
 
-# \### Routing policy
+**Examples:** `twcs_2542`, `twcs_2557`, `twcs_3739`
 
-# 
+`twcs_3739` reports that the carrier could not locate the customer's address.
 
-# The routing layer combines model confidence, retrieved evidence, consistency, and deterministic safety checks.
+**Observed behavior:** The system can identify the delivery intent without having enough information for safe resolution.
 
-# 
+**Hypothesis:** Intent confidence can be high while resolution confidence is low.
 
-# Configured thresholds include:
+**Fix:** Explicitly separate intent confidence from resolution confidence.
 
-# 
+### Failure 4 — Multilingual and noisy customer text
 
-# \* minimum trust for auto-handling: \*\*0.62\*\*
+**Example:** `twcs_3739`
 
-# \* maximum risk score for auto-handling: \*\*0.45\*\*
+The Portuguese delivery message differs substantially from the dominant English-language examples.
 
-# \* minimum retrieval evidence items: \*\*2\*\*
+**Hypothesis:** TF-IDF is less robust to cross-language semantic similarity.
 
-# \* strong retrieval score: \*\*0.45\*\*
+**Fix:** Evaluate multilingual semantic retrieval and report performance by language.
 
-# \* minimum retrieval score: \*\*0.18\*\*
+### Failure 5 — Faulty product plus support-access problem
 
-# 
+**Example:** `twcs_4828`
 
-# High-risk signals such as hacked/unauthorized accounts, fraud, chargebacks, legal threats, danger, injury, or similar language can force escalation.
+The model predicted `order_issue`, while the human label was `product_technical_issue`.
 
-# 
+**Hypothesis:** Support-channel language can compete with the underlying customer problem.
 
-# Additional deterministic checks cover sensitive account issues, persistent/unresolved problems, insufficient information, payment/transaction issues, high-risk order situations, follow-up requests, and specific review signals.
+**Fix:** Use secondary-intent reasoning and prioritize the underlying issue.
 
-# 
+## 11. What Is Misleading About the Headline Number?
 
-# The design intentionally biases toward escalation when evidence is weak or the customer situation appears unsafe to resolve automatically.
+The headline **86.96% escalation recall** is useful, but it can be misleading if interpreted as evidence that the system is ready for autonomous support.
 
-# 
+First, escalation recall is achieved partly through conservative routing. The system escalates **132 of 180** evaluated cases, leaving 48 for auto-handling.
 
-# \---
+Second, the golden set contains only 180 cases and is diversity-oriented. Its distribution may differ from real incoming AmazonHelp traffic.
 
-# 
+Third, escalation recall does not directly measure whether generated replies are correct or well grounded.
 
-# \## 4. Evaluation
+Finally, the system produced **12 false auto-handles**, meaning some cases that humans considered escalation-worthy were routed to auto-handling.
 
-# 
+**More honest takeaway:** the system is promising as a **conservative support triage and drafting assistant**, but the current evidence is insufficient to justify broad autonomous customer handling.
 
-# \### Results
+## 12. What I Would Do With One More Week
 
-# 
+1. **Separate classification confidence from resolution confidence.**
+   A clear intent does not mean the case can be resolved without private customer information.
 
-# | System                       | Intent Macro-F1 | Escalation Recall | False Auto-Handle Rate |
+2. **Add multilingual semantic retrieval.**
+   Compare multilingual embeddings against TF-IDF, especially on non-English and noisy messages.
 
-# | ---------------------------- | --------------: | ----------------: | ---------------------: |
+3. **Expand judge-human validation.**
+   Increase the human-rated sample and repeat the agreement analysis.
 
-# | Majority baseline            |           4.00% |             0.00% |                 0.00%\* |
+4. **Evaluate routing by intent and risk tier.**
+   Report false auto-handles separately for account, payment, delivery, technical, and other high-risk categories.
 
-# | Keyword baseline             |          21.64% |             0.00% |                 0.00%\* |
+The priority should be reducing **false auto-handles**, not maximizing raw intent accuracy.
 
-# | TF-IDF + Logistic Regression |          18.28% |             0.00% |                 0.00%\* |
+## 13. Decision Log
 
-# | \*\*Proposed agent\*\*           |      \*\*56.11%\*\* |        \*\*86.96%\*\* |             \*\*13.04%\*\* |
+1. **Conversation reconstruction:** Preserve multi-turn support context.
+2. **AmazonHelp selection:** Broad coverage of support scenarios.
+3. **Fixed taxonomy:** Reduce evaluation drift.
+4. **Ten intents:** Balance coverage and annotation consistency.
+5. **TF-IDF retrieval:** Lightweight, interpretable, reproducible baseline.
+6. **Self-retrieval exclusion:** Reduce trivial leakage.
+7. **Separate retrieval and generation:** Historical examples provide evidence; the LLM drafts the response.
+8. **Intent vs. resolution confidence:** Understanding the problem is not equivalent to resolving it.
+9. **Conservative escalation:** Human review is safer when evidence is insufficient.
+10. **Deterministic risk checks:** High-risk cases should not depend solely on model judgment.
+11. **False auto-handle metric:** Capture unsafe routing that aggregate recall can hide.
+12. **Simple baselines:** Establish a meaningful performance reference.
+13. **Separate LLM judge:** Evaluate response quality independently from generation.
+14. **Human judge validation:** Test whether judge scores align with human ratings.
+15. **Diagnostic kappa:** Avoid overstating reliability from a 10-case sample.
 
-# 
+## 14. Reproducibility
 
-# \*The simple baselines defaulted to non-escalation, so their apparent zero false-auto metric is not evidence of safety; they simply never escalated. Their auto-handle rate was effectively 100%.
+### Baselines
 
-# 
+```powershell
+python -m eval.run_baselines
+```
 
-# The proposed agent therefore provides a substantially stronger intent signal than the trivial/simple baselines while also identifying most gold escalation cases.
+### Final evaluation
 
-# 
+```powershell
+python -m eval.run_eval `
+  --predictions results/groq_predictions_180_final.csv `
+  --gold data/golden/golden_set.csv `
+  --out_dir results\eval_final_180
+```
 
-# Additional proposed-agent results:
+### LLM judge
 
-# 
+```powershell
+python -m eval.run_judge `
+  --predictions results/groq_predictions_180_final.csv `
+  --threads data/processed/threads.csv `
+  --n 30 `
+  --out results/judge_30_retry.csv
+```
 
-# \* Intent accuracy: \*\*55.00%\*\*
+### Judge-human agreement
 
-# \* Escalation precision: \*\*60.61%\*\*
+```powershell
+python -m eval.judge_agreement `
+  --judge results/judge_30_retry.csv `
+  --human eval\HUMAN_JUDGE_FORM.csv `
+  --out results\judge_agreement_10.csv
+```
 
-# \* Escalation F1: \*\*71.43%\*\*
+## 15. Conclusion
 
-# \* False auto-handles: \*\*12 / 92 gold escalation cases\*\*
+The proposed AmazonHelp support agent substantially outperforms the simple baselines on intent classification while achieving high escalation recall.
 
-# \* Intent ECE: \*\*0.136\*\*
+Its main limitation is that historical similarity and intent confidence do not guarantee that a case can actually be resolved without account-specific investigation.
 
-# 
-
-# \### Golden-set methodology
-
-# 
-
-# The golden set contains \*\*180 hand-labelled cases\*\*, within the required 150–250 range.
-
-# 
-
-# Cases were sampled from reconstructed AmazonHelp support interactions using diversity-aware sampling rather than simply selecting the first 180 rows. The intent taxonomy was fixed before final evaluation. Human labels include primary intent, optional secondary intent, escalation decision, escalation reason, and reply notes.
-
-# 
-
-# The current golden set contains:
-
-# 
-
-# \* 44 delivery issues
-
-# \* 23 product technical issues
-
-# \* 22 other
-
-# \* 20 account issues
-
-# \* 19 complaint follow-ups
-
-# \* 13 Prime subscription cases
-
-# \* 12 order issues
-
-# \* 12 refund/payment cases
-
-# \* 11 package-not-received cases
-
-# \* 4 return/cancellation cases
-
-# 
-
-# The retriever explicitly excludes the current case from its own evidence results, reducing trivial self-retrieval leakage.
-
-# 
-
-# \### LLM judge validation
-
-# 
-
-# The LLM judge was implemented as a separate evaluation component using the same generated predictions.
-
-# 
-
-# However, \*\*judge-human validation is not reported as completed\*\*. Thirty LLM-judge cases were successfully evaluated. LLM-judge descriptive results (n=30) were: groundedness 3.70/5, helpfulness 3.33/5, correctness 4.80/5, tone 4.23/5, and overall 3.70/5. The human rating form was not populated with an independent human-rated subset.
-
-# 
-
-# Therefore:
-
-# 
-
-# \* judge-human sample: \*\*0 completed\*\*
-
-# \* quadratic weighted Cohen's kappa: \*\*not available\*\*
-
-# \* judge-human disagreements: \*\*not available\*\*
-
-# 
-
-# This is intentionally left unreported rather than fabricated.
-
-# 
-
-# \---
-
-# 
-
-# \## 5. Failure analysis — top 5
-
-# 
-
-# \### Failure 1 — Ongoing issue hidden in conversation context
-
-# 
-
-# \*\*Real examples:\*\* `twcs\_273`, `twcs\_3752`, `twcs\_3754`, `twcs\_3755`
-
-# 
-
-# For example, `twcs\_273` describes a Fire TV Stick issue that remained unresolved after phone support and mentions that the warranty had expired.
-
-# 
-
-# \*\*Observed behavior:\*\* The model correctly classified the intent as a product technical issue but sometimes treated the latest message as sufficiently routine for auto-handling.
-
-# 
-
-# \*\*Why it failed:\*\* The strongest escalation signal was distributed across the conversation history rather than contained in a single explicit phrase.
-
-# 
-
-# \*\*Hypothesis:\*\* A classifier that gives too much weight to the latest customer message can miss persistence and prior troubleshooting.
-
-# 
-
-# \*\*Fix:\*\* Add a dedicated context summarization/persistence feature and explicitly pass unresolved prior attempts into the routing decision.
-
-# 
-
-# \---
-
-# 
-
-# \### Failure 2 — Order-specific investigation
-
-# 
-
-# \*\*Real examples:\*\* `twcs\_663`, `twcs\_1723`, `twcs\_1725`, `twcs\_3722`
-
-# 
-
-# `twcs\_663`, for example, says the customer paid for delivery that did not arrive and requests a delivery-charge refund.
-
-# 
-
-# \*\*Observed behavior:\*\* The intent was often correct, but the system sometimes considered the case safe to auto-handle.
-
-# 
-
-# \*\*Why it failed:\*\* These cases require checking account/order-specific information that historical retrieval cannot establish.
-
-# 
-
-# \*\*Hypothesis:\*\* Historical similarity can make a case look answerable even when the actual resolution depends on private order state.
-
-# 
-
-# \*\*Fix:\*\* Introduce an explicit "requires account/order lookup" signal that forces escalation when resolution depends on unavailable customer-specific state.
-
-# 
-
-# \---
-
-# 
-
-# \### Failure 3 — Sparse delivery-investigation language
-
-# 
-
-# \*\*Real examples:\*\* `twcs\_2542`, `twcs\_2557`, `twcs\_3739`
-
-# 
-
-# `twcs\_3739` reports that the carrier could not locate the customer's address.
-
-# 
-
-# \*\*Observed behavior:\*\* The system classified these as delivery issues but did not always escalate.
-
-# 
-
-# \*\*Why it failed:\*\* The messages contain little descriptive context, while the underlying issue requires carrier/order investigation.
-
-# 
-
-# \*\*Hypothesis:\*\* Sparse messages can receive artificially high confidence from a broad intent category without providing enough evidence for a safe response.
-
-# 
-
-# \*\*Fix:\*\* Separate \*\*intent confidence\*\* from \*\*resolution confidence\*\*. A confident delivery classification should not imply that the case is safe to resolve automatically.
-
-# 
-
-# \---
-
-# 
-
-# \### Failure 4 — Multilingual and noisy customer text
-
-# 
-
-# \*\*Real example:\*\* `twcs\_3739`
-
-# 
-
-# The Portuguese delivery message contains a clear delivery problem but differs substantially from the dominant English-language examples.
-
-# 
-
-# \*\*Observed behavior:\*\* The system identified the general delivery intent but routing confidence was not sufficiently conservative.
-
-# 
-
-# \*\*Why it failed:\*\* TF-IDF retrieval and lexical features are less robust when the query language differs from much of the historical corpus.
-
-# 
-
-# \*\*Hypothesis:\*\* Lexical retrieval loses semantic similarity across languages.
-
-# 
-
-# \*\*Fix:\*\* Add multilingual semantic retrieval or a lightweight multilingual embedding model and evaluate performance separately by language.
-
-# 
-
-# \---
-
-# 
-
-# \### Failure 5 — Faulty product + support-access problem
-
-# 
-
-# \*\*Real example:\*\* `twcs\_4828`
-
-# 
-
-# The customer says the website is impossible to navigate and that they are trying to contact Amazon about a faulty item.
-
-# 
-
-# \*\*Observed behavior:\*\* The model predicted `order\_issue`, while the human label was `product\_technical\_issue`, and the case should have received human attention.
-
-# 
-
-# \*\*Why it failed:\*\* Two signals compete: difficulty navigating support and an underlying faulty product.
-
-# 
-
-# \*\*Hypothesis:\*\* The model over-weighted the support/order workflow language instead of the actual customer problem.
-
-# 
-
-# \*\*Fix:\*\* Use secondary-intent reasoning and explicitly prioritize the underlying customer problem over the support-channel complaint.
-
-# 
-
-# \---
-
-# 
-
-# \## 6. What is misleading about my headline number?
-
-# 
-
-# The headline \*\*86.96% escalation recall\*\* is useful, but it can be misleading if interpreted as evidence that the system is ready for autonomous support.
-
-# 
-
-# First, escalation recall is achieved partly through conservative routing. The system escalates \*\*132 of 180\*\* evaluated cases, leaving only 48 for auto-handling. Therefore, high recall comes with substantial escalation volume.
-
-# 
-
-# Second, the golden set is only 180 cases and is intentionally diversity-oriented. Its distribution may differ from the distribution of real incoming AmazonHelp traffic.
-
-# 
-
-# Third, escalation recall says nothing directly about whether the generated replies are correct or well grounded.
-
-# 
-
-# Finally, the system still produced \*\*12 false auto-handles\*\*, meaning some cases that humans considered escalation-worthy were routed to auto-handling.
-
-# 
-
-# \*\*The more honest takeaway is:\*\* the system is promising as a \*\*conservative support triage assistant\*\*, but the current evidence is insufficient to justify broad autonomous customer handling.
-
-# 
-
-# \---
-
-# 
-
-# \## 7. What I would do with one more week
-
-# 
-
-# 1\. \*\*Separate classification confidence from resolution confidence.\*\*
-
-# &#x20;  A case can have a clear intent but still require account/order investigation. This is likely the highest-impact safety improvement.
-
-# 
-
-# 2\. \*\*Add multilingual semantic retrieval.\*\*
-
-# &#x20;  Evaluate whether multilingual embeddings improve retrieval and intent performance on non-English/noisy messages.
-
-# 
-
-# 3\. \*\*Create an independent judge-human validation set.\*\*
-
-# &#x20;  Have humans score a fixed subset of generated replies and measure agreement with the LLM judge before using judge scores as a quality metric.
-
-# 
-
-# 4\. \*\*Evaluate routing by intent and risk tier.\*\*
-
-# &#x20;  Instead of only reporting aggregate escalation recall, measure false auto-handles separately for payment, account, delivery, technical, and other high-risk categories.
-
-# 
-
-# The priority should be reducing \*\*false auto-handles\*\* rather than maximizing raw intent accuracy.
-
-# 
-
-# \---
-
-# 
-
-# \## 8. Conclusion
-
-# 
-
-# The proposed AmazonHelp support agent substantially outperforms the trivial and lexical baselines on intent classification while achieving high escalation recall. Its main limitation is that historical similarity and intent confidence do not guarantee that a case can actually be resolved without account-specific investigation. The system is therefore best positioned as a conservative triage and drafting assistant today, with safer autonomous handling as the next engineering target.
+The system is therefore best positioned as a **conservative triage and drafting assistant today**, with safer autonomous handling as the next engineering target.

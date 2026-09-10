@@ -1,1165 +1,437 @@
-# \# Hiver SDE Intern — AI Customer Support Agent
+# Hiver SDE Intern — AI Customer Support Agent
+
+AI customer-support agent built for the Hiver SDE Intern take-home assignment using the Customer Support on Twitter (TWCS) dataset and AmazonHelp as the selected brand.
+
+## 1. Executive Summary
+
+The agent:
 
-# 
+- classifies incoming customer cases into 10 support intents
+- retrieves similar historical brand resolutions
+- drafts a grounded support response with an LLM
+- decides whether to `auto_handle` or `escalate`
+- provides an escalation reason
+- evaluates performance on a 180-case hand-labelled golden set
+- compares against simple baselines
+- evaluates response quality with an LLM judge and human validation
+- analyzes failure modes and false auto-handling
 
-# An AI customer-support agent built for the Hiver SDE Intern take-home assignment using the \*\*Customer Support on Twitter (TWCS)\*\* dataset and \*\*AmazonHelp\*\* as the selected support brand.
+**Core design principle:** intent confidence is not the same as resolution confidence.
 
-# 
+A customer message can have a clear intent while still requiring private order, account, payment, or carrier information that the system does not have.
 
-# The system:
+## 2. System Overview
 
-# 
+```text
+Incoming customer message
+        |
+        v
+Conversation context reconstruction
+        |
+        v
+Intent classification
+        |
+        v
+TF-IDF historical retrieval
+        |
+        v
+Evidence consistency + risk checks
+        |
+        v
+Grounded LLM reply generation
+        |
+        v
+Trust + routing decision
+        |
+        v
+AUTO-HANDLE / ESCALATE
+```
 
-# 1\. reconstructs multi-turn customer-support cases,
+The system separates two questions:
 
-# 2\. classifies the customer's intent,
+1. What is the customer's problem?
+2. Can it be safely resolved with the available evidence?
 
-# 3\. retrieves similar historical AmazonHelp interactions,
+This distinction is important for support automation because historical similarity does not provide access to private customer state.
 
-# 4\. generates a grounded support reply,
+## 3. Dataset
 
-# 5\. evaluates evidence and risk,
+**Source:** Customer Support on Twitter (TWCS)
 
-# 6\. decides whether to `auto\_handle` or `escalate`,
+**Selected brand:** AmazonHelp
 
-# 7\. evaluates the system against a hand-labelled golden set,
+| Dataset stage | Count |
+|---|---:|
+| Raw TWCS rows | 2,811,774 |
+| Reconstructed AmazonHelp cases | 168,814 |
+| Hand-labelled golden cases | 180 |
 
-# 8\. compares the approach with simple baselines.
+Conversation reconstruction produces a support-case unit rather than treating every tweet independently.
 
-# 
+- Maximum context: 6 turns
+- Mean context length: 2.49 turns
+- Median context length: 1 turn
+- Golden-set sampling: diversity-aware rather than first-N sampling
 
-# \---
+The golden labels were manually assigned using `eval/LABELING_GUIDE.md`.
 
-# 
+## 4. Intent Taxonomy
 
-# \## 1. System overview
+| Intent | Definition | Golden count |
+|---|---|---:|
+| `order_issue` | Order problems, missing/wrong items, or order-specific handling | 12 |
+| `delivery_issue` | Delivery delays, failures, carrier/address problems, or delivery charges | 44 |
+| `package_not_received` | Package marked/determined delivered but not received | 11 |
+| `return_cancellation` | Returns or order-cancellation requests/problems | 4 |
+| `refund_payment` | Refunds, charges, billing, or payment problems | 12 |
+| `prime_subscription` | Prime membership, charges, or benefits | 13 |
+| `account_issue` | Account access, account state, or account management | 20 |
+| `product_technical_issue` | Faulty products, technical failures, or troubleshooting | 23 |
+| `complaint_followup` | Repeated contact, unresolved support, or follow-up requests | 19 |
+| `other` | Cases outside the above categories | 22 |
 
-# 
+## 5. Retrieval and Generation
 
-# ```text
+### Retrieval
 
-# Incoming customer message
+Historical support examples are retrieved using TF-IDF over:
 
-# &#x20;       ↓
+- latest customer text
+- conversation context
+- word unigrams and bigrams
 
-# Conversation context
+The current case is excluded from its own retrieval candidates to reduce trivial self-retrieval leakage.
 
-# &#x20;       ↓
+### Generation
 
-# Intent classification
+The LLM receives the customer message, conversation context, and retrieved historical support examples and is instructed to produce a grounded response.
 
-# &#x20;       ↓
+The final implementation uses Groq with:
 
-# TF-IDF historical retrieval
+```text
+LLM_PROVIDER=groq
+GROQ_MODEL=openai/gpt-oss-20b
+```
 
-# &#x20;       ↓
+The generated response is evaluated separately from the retrieval and routing components.
 
-# Evidence consistency + risk checks
+## 6. Safety and Routing
 
-# &#x20;       ↓
+Routing combines:
 
-# LLM grounded reply
+- model confidence
+- retrieval quality
+- evidence consistency
+- risk signals
+- deterministic safety checks
 
-# &#x20;       ↓
+Configured thresholds:
 
-# Trust / routing checks
+| Parameter | Value |
+|---|---:|
+| Minimum trust for auto-handling | 0.62 |
+| Maximum risk for auto-handling | 0.45 |
+| Minimum retrieval evidence items | 2 |
+| Strong retrieval score | 0.45 |
+| Minimum retrieval score | 0.18 |
 
-# &#x20;       ↓
+High-risk signals include language involving hacked or unauthorized accounts, fraud, chargebacks, legal threats, danger, injury, and similar situations.
 
-# AUTO-HANDLE / ESCALATE + reason
+Additional deterministic checks cover sensitive account issues, persistent or unresolved problems, insufficient information, payment/transaction issues, high-risk order situations, and follow-up requests.
 
-# ```
+The routing policy intentionally favors escalation when the available evidence is insufficient for safe autonomous resolution.
 
-# 
+## 7. Golden Evaluation
 
-# The design intentionally separates \*\*intent classification\*\* from \*\*safe resolution\*\*. A case can have an obvious intent while still requiring account-specific or order-specific investigation.
+The final evaluation uses **180 hand-labelled cases**, satisfying the required 150–250 case range.
 
-# 
+### Golden-set distribution
 
-# \---
+| Intent | Cases |
+|---|---:|
+| delivery_issue | 44 |
+| product_technical_issue | 23 |
+| other | 22 |
+| account_issue | 20 |
+| complaint_followup | 19 |
+| prime_subscription | 13 |
+| order_issue | 12 |
+| refund_payment | 12 |
+| package_not_received | 11 |
+| return_cancellation | 4 |
+| **Total** | **180** |
 
-# 
+Escalation labels:
 
-# \## 2. Dataset
+- Gold escalation: 92
+- Gold non-escalation: 88
 
-# 
+## 8. Baselines
 
-# The project uses the Customer Support on Twitter (TWCS) dataset.
+Three simple baselines were evaluated on a stratified holdout:
 
-# 
+1. Majority-class baseline
+2. Keyword baseline
+3. TF-IDF + Logistic Regression
 
-# The downloaded dataset contains:
+The holdout contained 36 cases, with 144 cases used for training where applicable.
 
-# 
+| System | Accuracy | Macro-F1 | Escalation Recall |
+|---|---:|---:|---:|
+| Majority | 25.00% | 4.00% | 0.00% |
+| Keyword | 27.78% | 21.64% | 0.00% |
+| TF-IDF + Logistic Regression | 19.44% | 18.28% | 0.00% |
 
-# \* \*\*2,811,774 raw tweets\*\*
+The simple baselines defaulted to non-escalation. Their zero escalation recall therefore does not demonstrate safety.
 
-# \* Columns:
+## 9. Final Agent Results
 
-# 
+Final evaluation on all 180 golden cases:
 
-# &#x20; \* `tweet\_id`
+| Metric | Result |
+|---|---:|
+| Intent accuracy | **55.00%** |
+| Intent macro-F1 | **56.11%** |
+| Escalation precision | **60.61%** |
+| Escalation recall | **86.96%** |
+| Escalation F1 | **71.43%** |
+| False auto-handles | **12 / 92** |
+| False auto-handle rate | **13.04%** |
+| Intent ECE | **0.136** |
 
-# &#x20; \* `author\_id`
+The agent escalated 132 of 180 evaluated cases and auto-handled 48.
 
-# &#x20; \* `inbound`
+The strongest result is high escalation recall. However, the 12 false auto-handles show that conservative routing still has important failure cases.
 
-# &#x20; \* `created\_at`
+## 10. LLM Judge Evaluation
 
-# &#x20; \* `text`
+A separate LLM judge evaluated 30 generated responses using five dimensions:
 
-# &#x20; \* `response\_tweet\_id`
+- groundedness
+- helpfulness
+- correctness
+- tone
+- overall quality
 
-# &#x20; \* `in\_response\_to\_tweet\_id`
+### LLM judge means
 
-# 
+| Dimension | Mean |
+|---|---:|
+| Groundedness | 3.70 / 5 |
+| Helpfulness | 3.33 / 5 |
+| Correctness | 4.80 / 5 |
+| Tone | 4.23 / 5 |
+| Overall | 3.70 / 5 |
 
-# The selected support brand is \*\*AmazonHelp\*\*.
+### Human validation
 
-# 
+A manually rated 10-case validation subset was compared with the LLM judge using quadratic weighted Cohen's kappa.
 
-# The loader reconstructs customer-support interactions into cases rather than treating every tweet independently.
+| Dimension | Kappa |
+|---|---:|
+| Groundedness | 0.123 |
+| Helpfulness | 0.565 |
+| Correctness | 0.370 |
+| Tone | 0.556 |
+| Overall | 0.556 |
 
-# 
+The agreement varies by dimension. Groundedness agreement is weak, while helpfulness, tone, and overall quality show moderate agreement on this small sample.
 
-# This produced:
+Because only 10 cases were human-rated, these statistics should be treated as diagnostic rather than definitive evidence of judge reliability.
 
-# 
+Evaluation artifacts:
 
-# \* \*\*168,814 reconstructed AmazonHelp cases\*\*
+- `results/judge_30_retry.csv`
+- `eval/HUMAN_JUDGE_FORM.csv`
+- `results/judge_agreement_10.csv`
 
-# \* Context window: up to \*\*6 turns\*\*
+## 11. Top Failure Modes
 
-# \* Mean context length: \*\*2.49 turns\*\*
+### 1. Ongoing issue hidden in conversation context
 
-# \* Median context length: \*\*1 turn\*\*
+**Examples:** `twcs_273`, `twcs_3752`, `twcs_3754`, `twcs_3755`
 
-# 
+A customer can have an unresolved issue across multiple turns even when the latest message looks routine.
 
-# The full TWCS dataset is not committed to the repository.
+**Observed problem:** The intent may be classified correctly while routing is too permissive.
 
-# 
+**Hypothesis:** Over-weighting the latest customer message can hide persistence and previous troubleshooting.
 
-# Place the downloaded dataset at:
+**Next fix:** Add an explicit persistence/context-summary feature to routing.
 
-# 
+### 2. Order-specific investigation
 
-# ```text
+**Examples:** `twcs_663`, `twcs_1723`, `twcs_1725`, `twcs_3722`
 
-# data/raw/twcs.csv
+Some cases require checking private order or account state.
 
-# ```
+**Observed problem:** Historical similarity can make these cases appear answerable.
 
-# 
+**Hypothesis:** Retrieval cannot establish customer-specific facts.
 
-# \---
+**Next fix:** Add a `requires_account_or_order_lookup` signal that forces escalation.
 
-# 
+### 3. Sparse delivery-investigation language
 
-# \## 3. Setup
+**Examples:** `twcs_2542`, `twcs_2557`, `twcs_3739`
 
-# 
+Short delivery messages can have little evidence even when the intent is clear.
 
-# Python 3.10+ is recommended.
+**Hypothesis:** Intent confidence can be high while resolution confidence is low.
 
-# 
+**Next fix:** Explicitly separate intent confidence from resolution confidence.
 
-# \### Create virtual environment
+### 4. Multilingual and noisy text
 
-# 
+**Example:** `twcs_3739`
 
-# Windows:
+Lexical retrieval is less robust when the query language differs from the dominant historical corpus.
 
-# 
+**Next fix:** Evaluate multilingual semantic retrieval and report performance by language.
 
-# ```powershell
+### 5. Faulty product plus support-access problem
 
-# python -m venv .venv
+**Example:** `twcs_4828`
 
-# .venv\\Scripts\\activate
+The model predicted `order_issue` while the human label was `product_technical_issue`.
 
-# ```
+**Hypothesis:** Support-channel language can compete with the underlying customer problem.
 
-# 
+**Next fix:** Use secondary-intent reasoning and prioritize the underlying issue.
 
-# macOS/Linux:
+## 12. What Is Misleading About the Headline Number?
 
-# 
+The headline **86.96% escalation recall** should not be interpreted as evidence that the system is ready for autonomous customer support.
 
-# ```bash
+Three limitations matter:
 
-# python -m venv .venv
+1. **High recall comes with high escalation volume.**
+   The system escalated 132 of 180 cases.
 
-# source .venv/bin/activate
+2. **The golden set is small and diversity-oriented.**
+   Its distribution may differ from real incoming AmazonHelp traffic.
 
-# ```
+3. **Escalation recall does not measure reply quality.**
+   It says whether escalation-worthy cases were detected, not whether generated responses were correct or grounded.
 
-# 
+The system still produced **12 false auto-handles**.
 
-# Install dependencies:
+The more honest conclusion is that the system is promising as a **conservative support triage and drafting assistant**, not as a broadly autonomous support agent.
 
-# 
+## 13. One-Week Improvement Plan
 
-# ```bash
+### Priority 1 — Separate intent and resolution confidence
 
-# pip install -r requirements.txt
+A clear intent should not automatically imply that the case can be resolved without private customer information.
 
-# ```
+### Priority 2 — Improve multilingual retrieval
 
-# 
+Test multilingual embeddings against TF-IDF, especially on non-English and noisy messages.
 
-# \---
+### Priority 3 — Expand judge-human validation
 
-# 
+Increase the human-rated sample and repeat the agreement analysis before relying heavily on LLM-judge scores.
 
-# \## 4. Environment variables
+### Priority 4 — Evaluate routing by risk tier
 
-# 
+Report false auto-handles separately for account, payment, delivery, technical, and other high-risk categories.
 
-# The current implementation uses:
+The main optimization target should be **reducing false auto-handles**, not maximizing raw intent accuracy.
 
-# 
+## 14. Decision Log
 
-# ```text
+1. **Reconstruct conversations:** Support interactions are conversational, so context is retained.
+2. **Select AmazonHelp:** Provides a broad range of customer-support scenarios.
+3. **Fix taxonomy before evaluation:** Reduces evaluation drift.
+4. **Use 10 explicit intents:** Balances coverage with annotation consistency.
+5. **Start with TF-IDF:** Lightweight, interpretable, reproducible retrieval baseline.
+6. **Exclude self-retrieval:** Prevents trivial leakage from the current case.
+7. **Separate retrieval and generation:** Retrieved examples provide evidence; the LLM drafts the response.
+8. **Separate intent from resolution confidence:** Understanding a problem is not equivalent to being able to resolve it.
+9. **Prefer escalation under uncertainty:** Incorrect autonomous support can be more costly than human review.
+10. **Use deterministic risk checks:** Certain high-risk situations should not depend solely on model judgment.
+11. **Measure false auto-handles:** Aggregate escalation recall alone can hide unsafe routing.
+12. **Include simple baselines:** Establishes whether the proposed system adds value.
+13. **Use a separate LLM judge:** Keeps response-quality evaluation separate from generation.
+14. **Validate the judge with humans:** Avoids assuming LLM-judge scores are automatically reliable.
+15. **Treat kappa as diagnostic:** Ten human-rated cases are insufficient for definitive reliability claims.
 
-# LLM\_PROVIDER=groq
+## 15. Reproducibility
 
-# GROQ\_API\_KEY=your\_key\_here
+### Baselines
 
-# GROQ\_MODEL=openai/gpt-oss-20b
+```powershell
+python -m eval.run_baselines
+```
 
-# ```
+### Final evaluation
 
-# 
+```powershell
+python -m eval.run_eval `
+  --predictions results/groq_predictions_180_final.csv `
+  --gold data/golden/golden_set.csv `
+  --out_dir results\eval_final_180
+```
 
-# Do \*\*not\*\* commit `.env` or API keys.
+### LLM judge
 
-# 
+```powershell
+python -m eval.run_judge `
+  --predictions results/groq_predictions_180_final.csv `
+  --threads data/processed/threads.csv `
+  --n 30 `
+  --out results/judge_30_retry.csv
+```
 
-# A template is provided in:
+### Judge-human agreement
 
-# 
+```powershell
+python -m eval.judge_agreement `
+  --judge results/judge_30_retry.csv `
+  --human eval\HUMAN_JUDGE_FORM.csv `
+  --out results\judge_agreement_10.csv
+```
 
-# ```text
+## 16. Project Structure
 
-# .env.example
+```text
+hiver-sde-assignment/
+├── configs/
+│   ├── taxonomy.yaml
+│   └── thresholds.yaml
+├── data/
+│   ├── golden/
+│   │   └── golden_set.csv
+│   └── processed/
+│       └── threads.csv
+├── eval/
+│   ├── LABELING_GUIDE.md
+│   ├── HUMAN_JUDGE_FORM.csv
+│   ├── judge_agreement.py
+│   ├── run_baselines.py
+│   ├── run_eval.py
+│   └── run_judge.py
+├── reports/
+│   └── REPORT.md
+├── results/
+│   ├── groq_predictions_180_final.csv
+│   ├── judge_30_retry.csv
+│   └── judge_agreement_10.csv
+└── src/
+    ├── baselines.py
+    ├── config.py
+    └── retrieval/
+        └── tfidf.py
+```
 
-# ```
+## 17. Final Positioning
 
-# 
+This project demonstrates an end-to-end support-agent pipeline covering:
 
-# The LLM provider can be changed through configuration, but the final reported experiment used:
+**conversation reconstruction → intent classification → historical retrieval → grounded generation → safety/routing → evaluation → failure analysis**
 
-# 
+The evaluation supports a conservative deployment position:
 
-# ```text
+> **Use the system to assist support agents and triage incoming cases, while keeping human review for uncertain or high-risk situations.**
 
-# Provider: Groq
-
-# Model: openai/gpt-oss-20b
-
-# ```
-
-# 
-
-# \---
-
-# 
-
-# \## 5. First run without an API key
-
-# 
-
-# A small synthetic dataset is included so the pipeline structure can be tested without the full TWCS dataset or an API key.
-
-# 
-
-# ```bash
-
-# python -m src.load\_data \\
-
-# &#x20; --raw\_csv data/raw/sample\_raw.csv \\
-
-# &#x20; --brand AmazonHelp \\
-
-# &#x20; --out data/processed/threads.csv
-
-# ```
-
-# 
-
-# Then:
-
-# 
-
-# ```bash
-
-# python -m src.run\_pipeline \\
-
-# &#x20; --threads\_csv data/processed/threads.csv \\
-
-# &#x20; --n 10 \\
-
-# &#x20; --out results/pipeline\_output.csv \\
-
-# &#x20; --dry\_run
-
-# ```
-
-# 
-
-# \---
-
-# 
-
-# \## 6. Reconstruct the real dataset
-
-# 
-
-# Place the TWCS file at:
-
-# 
-
-# ```text
-
-# data/raw/twcs.csv
-
-# ```
-
-# 
-
-# Discover candidate support accounts:
-
-# 
-
-# ```bash
-
-# python -m src.discover\_brands \\
-
-# &#x20; --raw\_csv data/raw/twcs.csv \\
-
-# &#x20; --out results/brand\_candidates.csv \\
-
-# &#x20; --top\_k 30
-
-# ```
-
-# 
-
-# Then reconstruct the selected brand:
-
-# 
-
-# ```bash
-
-# python -m src.load\_data \\
-
-# &#x20; --raw\_csv data/raw/twcs.csv \\
-
-# &#x20; --brand\_id YOUR\_SUPPORT\_AUTHOR\_ID \\
-
-# &#x20; --brand\_name AmazonHelp \\
-
-# &#x20; --out data/processed/threads.csv
-
-# ```
-
-# 
-
-# The final experiment uses the reconstructed AmazonHelp cases in:
-
-# 
-
-# ```text
-
-# data/processed/threads.csv
-
-# ```
-
-# 
-
-# \---
-
-# 
-
-# \## 7. Intent taxonomy
-
-# 
-
-# The final taxonomy contains 10 intents:
-
-# 
-
-# | Intent                    | Description                                                              |
-
-# | ------------------------- | ------------------------------------------------------------------------ |
-
-# | `order\_issue`             | Problems with an order, missing/wrong items, or order-specific handling  |
-
-# | `delivery\_issue`          | Delivery delays, failures, carrier/address problems, or delivery charges |
-
-# | `package\_not\_received`    | Package marked/determined delivered but not received                     |
-
-# | `return\_cancellation`     | Return or cancellation requests/problems                                 |
-
-# | `refund\_payment`          | Refund, billing, payment, or charge problems                             |
-
-# | `prime\_subscription`      | Prime membership, charges, or Prime benefits                             |
-
-# | `account\_issue`           | Account access/state/management problems                                 |
-
-# | `product\_technical\_issue` | Faulty products, technical failures, or troubleshooting                  |
-
-# | `complaint\_followup`      | Repeated contact, unresolved interactions, or follow-up                  |
-
-# | `other`                   | Cases outside the defined categories                                     |
-
-# 
-
-# The taxonomy is stored in:
-
-# 
-
-# ```text
-
-# configs/taxonomy.yaml
-
-# ```
-
-# 
-
-# \---
-
-# 
-
-# \## 8. Historical retrieval
-
-# 
-
-# The historical retriever uses \*\*TF-IDF\*\* with unigram and bigram features.
-
-# 
-
-# Why TF-IDF?
-
-# 
-
-# \* deterministic,
-
-# \* transparent,
-
-# \* inexpensive,
-
-# \* easy to reproduce,
-
-# \* requires no external embedding-model download.
-
-# 
-
-# The retriever searches historical AmazonHelp cases using:
-
-# 
-
-# ```text
-
-# latest\_customer\_text + conversation\_context
-
-# ```
-
-# 
-
-# The current case is excluded from its own retrieval results to avoid trivial self-retrieval leakage.
-
-# 
-
-# \---
-
-# 
-
-# \## 9. LLM response generation
-
-# 
-
-# The final experiment uses:
-
-# 
-
-# ```text
-
-# Groq
-
-# openai/gpt-oss-20b
-
-# ```
-
-# 
-
-# The model receives the customer situation together with retrieved historical evidence and is instructed to use historical replies as \*\*evidence\*\*, not as authoritative instructions.
-
-# 
-
-# This is important because historical support responses can be incomplete, inconsistent, or outdated.
-
-# 
-
-# The generated output contains the predicted intent, evidence information, reply, trust/routing information, and escalation reason.
-
-# 
-
-# \---
-
-# 
-
-# \## 10. Routing and safety
-
-# 
-
-# The system does not rely only on LLM confidence.
-
-# 
-
-# Deterministic checks can force escalation for:
-
-# 
-
-# \* sensitive account situations,
-
-# \* persistent/unresolved issues,
-
-# \* insufficient information,
-
-# \* payment/transaction problems,
-
-# \* high-risk order situations,
-
-# \* repeated follow-up requests,
-
-# \* high-risk terms such as fraud, hacked accounts, unauthorized activity, chargebacks, legal threats, danger, or injury.
-
-# 
-
-# Configured thresholds include:
-
-# 
-
-# ```yaml
-
-# routing:
-
-# &#x20; min\_trust\_for\_auto\_handle: 0.62
-
-# &#x20; max\_risk\_for\_auto\_handle: 0.45
-
-# ```
-
-# 
-
-# Retrieval thresholds include:
-
-# 
-
-# ```yaml
-
-# retrieval:
-
-# &#x20; min\_top\_score: 0.18
-
-# &#x20; strong\_top\_score: 0.45
-
-# &#x20; min\_evidence\_items: 2
-
-# &#x20; min\_consistency: 0.10
-
-# ```
-
-# 
-
-# The design intentionally favors escalation when a response cannot be safely grounded.
-
-# 
-
-# \---
-
-# 
-
-# \## 11. Golden evaluation set
-
-# 
-
-# The final evaluation uses:
-
-# 
-
-# ```text
-
-# data/golden/golden\_set.csv
-
-# ```
-
-# 
-
-# It contains \*\*180 hand-labelled cases\*\*.
-
-# 
-
-# The golden set was created using diversity-aware sampling rather than simply taking the first 180 cases.
-
-# 
-
-# Human labels include:
-
-# 
-
-# \* `gold\_intent`
-
-# \* `gold\_secondary\_intent`
-
-# \* `gold\_should\_escalate`
-
-# \* `gold\_escalation\_reason`
-
-# \* `gold\_reply\_notes`
-
-# 
-
-# The labeling methodology is documented in:
-
-# 
-
-# ```text
-
-# eval/LABELING\_GUIDE.md
-
-# ```
-
-# 
-
-# The golden set is a human reference set and is not generated by the model.
-
-# 
-
-# \---
-
-# 
-
-# \## 12. Baselines
-
-# 
-
-# Three baselines were evaluated:
-
-# 
-
-# \### Majority baseline
-
-# 
-
-# Always predicts the most common intent.
-
-# 
-
-# \### Keyword baseline
-
-# 
-
-# Uses deterministic keyword/category matching.
-
-# 
-
-# \### TF-IDF + Logistic Regression
-
-# 
-
-# Uses TF-IDF features with a Logistic Regression classifier.
-
-# 
-
-# The baseline evaluation uses a stratified holdout from the labelled data.
-
-# 
-
-# \---
-
-# 
-
-# \## 13. Final evaluation results
-
-# 
-
-# The final proposed-agent evaluation covers all:
-
-# 
-
-# \*\*180 / 180 golden cases\*\*
-
-# 
-
-# | Metric                  |     Result |
-
-# | ----------------------- | ---------: |
-
-# | Intent accuracy         | \*\*55.00%\*\* |
-
-# | Intent macro-F1         | \*\*56.11%\*\* |
-
-# | Escalation precision    | \*\*60.61%\*\* |
-
-# | Escalation recall       | \*\*86.96%\*\* |
-
-# | Escalation F1           | \*\*71.43%\*\* |
-
-# | False auto-handle rate  | \*\*13.04%\*\* |
-
-# | False auto-handle count |     \*\*12\*\* |
-
-# | Intent ECE              | \*\*0.1363\*\* |
-
-# 
-
-# The final predictions are stored at:
-
-# 
-
-# ```text
-
-# results/groq\_predictions\_180\_final.csv
-
-# ```
-
-# 
-
-# The final evaluation is stored under:
-
-# 
-
-# ```text
-
-# results/eval\_final\_180/
-
-# ```
-
-# 
-
-# \---
-
-# 
-
-# \## 14. Baseline comparison
-
-# 
-
-# The evaluated baseline results were:
-
-# 
-
-# | System                       | Intent Macro-F1 | Escalation Recall |
-
-# | ---------------------------- | --------------: | ----------------: |
-
-# | Majority                     |           4.00% |             0.00% |
-
-# | Keyword                      |          21.64% |             0.00% |
-
-# | TF-IDF + Logistic Regression |          18.28% |             0.00% |
-
-# | \*\*Proposed agent\*\*           |      \*\*56.11%\*\* |        \*\*86.96%\*\* |
-
-# 
-
-# The simple baselines defaulted to non-escalation. Therefore, their zero escalation recall should not be interpreted as a meaningful safety advantage.
-
-# 
-
-# \---
-
-# 
-
-# \## 15. LLM judge
-
-# 
-
-# An LLM-judge evaluation pipeline is implemented in:
-
-# 
-
-# ```text
-
-# eval/run\_judge.py
-
-# ```
-
-# 
-
-# The intended workflow is:
-
-# 
-
-# ```text
-
-# Generated reply
-
-# &#x20;     ↓
-
-# LLM judge
-
-# &#x20;     ↓
-
-# Reply-quality rubric
-
-# &#x20;     ↓
-
-# Human rating of same examples
-
-# &#x20;     ↓
-
-# Quadratic weighted Cohen's kappa
-
-# ```
-
-# 
-
-# However, judge-human validation is \*\*not reported as completed\*\* for the final submission.
-
-# 
-
-# During execution, 30 LLM-judge cases were successfully completed.
-
-# 
-
-# LLM-judge descriptive results (n=30):
-
-# - Groundedness: 3.70 / 5
-# - Helpfulness: 3.33 / 5
-# - Correctness: 4.80 / 5
-# - Tone: 4.23 / 5
-# - Overall: 3.70 / 5
-
-# 
-
-# These are descriptive LLM-judge scores only. The human rating form was not populated because an independent human-rated validation sample was not completed. Therefore, judge-human agreement and Cohen's kappa are not reported.
-
-# 
-
-# No judge-human agreement statistic is fabricated in this repository.
-
-# 
-
-# \---
-
-# 
-
-# \## 16. Failure analysis
-
-# 
-
-# The main observed failure modes were:
-
-# 
-
-# 1\. \*\*Ongoing issues hidden in conversation context\*\*
-
-# 
-
-# &#x20;  \* Example: `twcs\_273`
-
-# &#x20;  \* The latest message alone under-represents the unresolved history.
-
-# 
-
-# 2\. \*\*Order-specific investigation\*\*
-
-# 
-
-# &#x20;  \* Example: `twcs\_663`
-
-# &#x20;  \* Historical evidence cannot substitute for checking private order/account state.
-
-# 
-
-# 3\. \*\*Sparse delivery-investigation messages\*\*
-
-# 
-
-# &#x20;  \* Examples: `twcs\_2542`, `twcs\_2557`, `twcs\_3739`
-
-# &#x20;  \* Intent can be clear while resolution evidence remains insufficient.
-
-# 
-
-# 4\. \*\*Multilingual/noisy text\*\*
-
-# 
-
-# &#x20;  \* Example: `twcs\_3739`
-
-# &#x20;  \* Lexical retrieval is weaker across languages.
-
-# 
-
-# 5\. \*\*Multiple competing problem signals\*\*
-
-# 
-
-# &#x20;  \* Example: `twcs\_4828`
-
-# &#x20;  \* Support-channel complaints can distract from the underlying product problem.
-
-# 
-
-# Detailed analysis is available in:
-
-# 
-
-# ```text
-
-# reports/REPORT.md
-
-# ```
-
-# 
-
-# \---
-
-# 
-
-# \## 17. What is misleading about the headline number?
-
-# 
-
-# The headline metric is \*\*86.96% escalation recall\*\*.
-
-# 
-
-# This is useful because missing an escalation-worthy case is an important safety failure.
-
-# 
-
-# However, it does not mean that 86.96% of cases can be safely resolved.
-
-# 
-
-# The system escalated \*\*132 of 180\*\* evaluated cases. Therefore, high escalation recall is partly achieved through conservative routing.
-
-# 
-
-# The final evaluation also contains only 180 hand-labelled cases, so the result may not represent the full production distribution.
-
-# 
-
-# The system still produced \*\*12 false auto-handles\*\*, which means some cases judged escalation-worthy by humans were routed toward automatic handling.
-
-# 
-
-# The system should therefore be viewed as a \*\*conservative support triage and drafting assistant\*\*, not as a fully autonomous support agent.
-
-# 
-
-# \---
-
-# 
-
-# \## 18. One-more-week plan
-
-# 
-
-# 1\. \*\*Separate intent confidence from resolution confidence.\*\*
-
-# &#x20;  A model can confidently identify an intent while still lacking the account/order information needed to resolve the case safely.
-
-# 
-
-# 2\. \*\*Add multilingual semantic retrieval.\*\*
-
-# &#x20;  Compare TF-IDF with multilingual embeddings, especially on non-English and noisy customer messages.
-
-# 
-
-# 3\. \*\*Complete independent judge-human validation.\*\*
-
-# &#x20;  Have humans rate a fixed subset of generated replies and calculate agreement before using LLM-judge scores as a quality metric.
-
-# 
-
-# 4\. \*\*Evaluate routing by risk and intent.\*\*
-
-# &#x20;  Measure false auto-handles separately for payment, account, delivery, technical, and other higher-risk categories.
-
-# 
-
-# The priority should be reducing unsafe auto-handling rather than maximizing a single aggregate accuracy number.
-
-# 
-
-# \---
-
-# 
-
-# \## 19. Repository structure
-
-# 
-
-# ```text
-
-# .
-
-# ├── configs/
-
-# │   ├── taxonomy.yaml
-
-# │   └── thresholds.yaml
-
-# ├── data/
-
-# │   ├── raw/
-
-# │   ├── processed/
-
-# │   └── golden/
-
-# ├── decision\_log/
-
-# │   └── DECISION\_LOG.md
-
-# ├── eval/
-
-# │   ├── LABELING\_GUIDE.md
-
-# │   ├── HUMAN\_JUDGE\_FORM.csv
-
-# │   ├── run\_baselines.py
-
-# │   ├── run\_eval.py
-
-# │   ├── run\_judge.py
-
-# │   ├── judge\_agreement.py
-
-# │   └── failure\_analysis.py
-
-# ├── reports/
-
-# │   └── REPORT.md
-
-# ├── src/
-
-# │   ├── agent/
-
-# │   ├── retrieval/
-
-# │   ├── baselines.py
-
-# │   └── ...
-
-# ├── tests/
-
-# ├── .env.example
-
-# ├── requirements.txt
-
-# └── README.md
-
-# ```
-
-# 
-
-# \---
-
-# 
-
-# \## 20. Tests
-
-# 
-
-# Run:
-
-# 
-
-# ```bash
-
-# python -m pytest -q
-
-# ```
-
-# 
-
-# Current result:
-
-# 
-
-# ```text
-
-# 6 passed in 2.46s
-
-# ```
-
-# 
-
-# \---
-
-# 
-
-# \## 21. Reproducibility
-
-# 
-
-# The final reported evaluation is based on:
-
-# 
-
-# \* the committed source code,
-
-# \* the reconstructed AmazonHelp cases,
-
-# \* the 180-case hand-labelled golden set,
-
-# \* the configured TF-IDF retriever,
-
-# \* Groq `openai/gpt-oss-20b`.
-
-# 
-
-# The full TWCS dataset is intentionally not committed because of dataset size/licensing considerations.
-
-# 
-
-# API keys must never be committed.
-
-# 
-
-# \---
-
-# 
-
-# \## 22. Key engineering takeaway
-
-# 
-
-# The main lesson from the evaluation is that \*\*classification confidence is not the same as resolution confidence\*\*.
-
-# 
-
-# A support agent may know that a customer has a delivery problem while still being unable to safely resolve it without access to order or carrier information.
-
-# 
-
-# The safest architecture is therefore:
-
-# 
-
-# ```text
-
-# Classify the problem
-
-# &#x20;       +
-
-# Determine whether the problem is actually resolvable
-
-# &#x20;       +
-
-# Escalate when evidence or required private state is missing
-
-# ```
-
-# 
-
-# This makes the system more appropriate for real support operations than optimizing only for intent accuracy.
+The next engineering step is not simply a larger model. It is better estimation of whether the system has enough evidence and access to safely resolve a specific customer case.
