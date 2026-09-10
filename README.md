@@ -822,7 +822,7 @@
 
 # 
 
-# During execution, the Groq model reached its token/day limit before the judge evaluation could be completed. The human rating form was therefore not populated with a completed validation sample.
+# During execution, 8 LLM-judge cases were successfully completed before the Groq token/day limit was reached. The human rating form was not populated because an independent human-rated validation sample was not completed.
 
 # 
 
