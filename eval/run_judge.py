@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import argparse
 import json
 import time
@@ -16,39 +14,48 @@ except ImportError:
 
 
 # ============================================================
-# SHORT LLM-AS-JUDGE RUBRIC
+# COMPACT LLM-AS-JUDGE RUBRIC
 # ============================================================
 
 RUBRIC = """
-Evaluate the AI support reply using only the supplied customer message,
-context, and historical evidence.
+Rate each dimension from 1 to 5.
 
-Score 1-5:
-groundedness = supported by historical evidence
-helpfulness = useful response to the customer
-correctness = accurate and avoids unsupported claims
-tone = professional, concise, empathetic
-overall = overall quality
+1 = poor
+3 = acceptable
+5 = excellent
 
-If evidence is insufficient, do not reward unsupported claims.
+Dimensions:
+G = groundedness: supported by supplied historical evidence
+H = helpfulness: useful for the customer's request
+C = correctness: accurate and avoids unsupported claims
+T = tone: professional, concise, empathetic
+O = overall quality
 
-Return ONLY this JSON object:
-{
-  "groundedness": 1,
-  "helpfulness": 1,
-  "correctness": 1,
-  "tone": 1,
-  "overall": 1,
-  "reason": "short reason"
-}
+Return ONLY five comma-separated integers in this exact order:
+
+G,H,C,T,O
+
+Example:
+4,5,5,4,5
+
+Do not explain.
+Do not use JSON.
+Do not write any other text.
 """
 
 
 # ============================================================
-# JSON PARSER
+# RESPONSE PARSER
 # ============================================================
 
 def parse_json(text: str) -> dict:
+    """
+    Parse the compact judge response.
+
+    The function name is retained for compatibility with the
+    existing judge pipeline. The judge now returns five
+    comma-separated integer scores rather than JSON.
+    """
 
     text = (text or "").strip()
 
@@ -57,88 +64,63 @@ def parse_json(text: str) -> dict:
             "Judge returned an empty response."
         )
 
-    # Remove markdown fences if the model accidentally adds them.
-    if text.startswith("```"):
+    # Remove accidental markdown fences.
+    text = (
+        text
+        .replace("```text", "")
+        .replace("```", "")
+        .strip()
+    )
 
-        text = text.replace(
-            "```json",
-            "",
-            1,
-        )
+    # The expected response is one line.
+    first_line = next(
+        (
+            line.strip()
+            for line in text.splitlines()
+            if line.strip()
+        ),
+        "",
+    )
 
-        if text.endswith("```"):
-            text = text[:-3]
-
-        text = text.strip()
-
-    # Some models may return extra text around JSON.
-    # Try the complete response first.
-    try:
-        result = json.loads(text)
-
-    except json.JSONDecodeError:
-
-        start = text.find("{")
-        end = text.rfind("}")
-
-        if start == -1 or end == -1 or end <= start:
-            raise ValueError(
-                "Judge response did not contain valid JSON."
-            )
-
-        result = json.loads(
-            text[start:end + 1]
-        )
-
-    if not isinstance(result, dict):
-        raise ValueError(
-            "Judge response is not a JSON object."
-        )
-
-    required = [
-        "groundedness",
-        "helpfulness",
-        "correctness",
-        "tone",
-        "overall",
-        "reason",
+    parts = [
+        x.strip()
+        for x in first_line.split(",")
     ]
 
-    for key in required:
+    if len(parts) != 5:
+        raise ValueError(
+            "Judge response must contain exactly "
+            f"5 comma-separated scores: {text}"
+        )
 
-        if key not in result:
-            raise ValueError(
-                f"Missing judge field: {key}"
-            )
+    try:
+        scores = [
+            int(x)
+            for x in parts
+        ]
+    except ValueError as exc:
+        raise ValueError(
+            "Judge response contains non-integer "
+            f"scores: {text}"
+        ) from exc
 
-    for key in required[:-1]:
+    if any(
+        score < 1 or score > 5
+        for score in scores
+    ):
+        raise ValueError(
+            "Judge scores must be between 1 and 5: "
+            f"{text}"
+        )
 
-        try:
-            value = int(
-                result[key]
-            )
-        except (
-            TypeError,
-            ValueError,
-        ) as exc:
-
-            raise ValueError(
-                f"Invalid score for {key}: "
-                f"{result[key]}"
-            ) from exc
-
-        if value < 1 or value > 5:
-            raise ValueError(
-                f"Score for {key} must be 1-5."
-            )
-
-        result[key] = value
-
-    result["reason"] = str(
-        result["reason"]
-    ).strip()
-
-    return result
+    return {
+        "groundedness": scores[0],
+        "helpfulness": scores[1],
+        "correctness": scores[2],
+        "tone": scores[3],
+        "overall": scores[4],
+        "reason": "",
+    }
 
 
 # ============================================================
@@ -149,8 +131,8 @@ class GroqJudge:
 
     def __init__(
         self,
-        max_tokens: int = 180,
-        max_retries: int = 1,
+        max_tokens: int = 32,
+        max_retries: int = 0,
     ):
 
         key = groq_key()
@@ -170,7 +152,6 @@ class GroqJudge:
         )
 
         self.model = groq_model()
-
         self.max_tokens = max_tokens
         self.max_retries = max_retries
 
@@ -200,8 +181,8 @@ class GroqJudge:
                                     "You are a strict "
                                     "support-quality "
                                     "evaluator. "
-                                    "Return ONLY valid "
-                                    "JSON."
+                                    "Follow the requested "
+                                    "output format exactly."
                                 ),
                             },
                             {
@@ -215,7 +196,7 @@ class GroqJudge:
                 )
 
                 # ------------------------------------------------
-                # Safely extract response content
+                # Safely extract response
                 # ------------------------------------------------
 
                 if not response.choices:
@@ -223,14 +204,20 @@ class GroqJudge:
                         "Judge returned no choices."
                     )
 
-                message = (
-                    response
-                    .choices[0]
-                    .message
+                choice = response.choices[0]
+
+                message = getattr(
+                    choice,
+                    "message",
+                    None,
                 )
 
                 text = (
-                    message.content
+                    getattr(
+                        message,
+                        "content",
+                        "",
+                    )
                     if message is not None
                     else ""
                 )
@@ -242,36 +229,25 @@ class GroqJudge:
                 if not text:
 
                     finish_reason = getattr(
-                        response.choices[0],
+                        choice,
                         "finish_reason",
                         "",
                     )
 
                     raise ValueError(
                         "Judge returned an empty "
-                        f"response. finish_reason="
+                        "response. finish_reason="
                         f"{finish_reason}"
                     )
 
-                return parse_json(
-                    text
-                )
+                return parse_json(text)
 
             except Exception as exc:
 
                 last_error = exc
 
-                error_text = str(
-                    exc
-                )
-
-                lower = (
-                    error_text.lower()
-                )
-
-                # --------------------------------------------
-                # Retry only temporary failures.
-                # --------------------------------------------
+                error_text = str(exc)
+                lower = error_text.lower()
 
                 retryable = (
                     "429" in error_text
@@ -297,10 +273,7 @@ class GroqJudge:
                         f"response. Retrying in {wait}s..."
                     )
 
-                    time.sleep(
-                        wait
-                    )
-
+                    time.sleep(wait)
                     continue
 
                 raise RuntimeError(
@@ -310,7 +283,7 @@ class GroqJudge:
 
 
 # ============================================================
-# BUILD SMALL JUDGE PROMPT
+# BUILD COMPACT JUDGE PROMPT
 # ============================================================
 
 def build_prompt(
@@ -320,24 +293,21 @@ def build_prompt(
     historical_examples: list[dict],
 ) -> str:
 
-    # Keep evidence deliberately small to reduce token usage.
+    # Use at most two historical examples.
     compact = []
 
     for item in historical_examples[:2]:
 
         compact.append(
             {
-                "customer":
-                    item.get(
-                        "latest_customer_text",
-                        "",
-                    )[:500],
-
-                "reply":
-                    item.get(
-                        "historical_brand_reply",
-                        "",
-                    )[:500],
+                "customer": item.get(
+                    "latest_customer_text",
+                    "",
+                )[:350],
+                "reply": item.get(
+                    "historical_brand_reply",
+                    "",
+                )[:350],
             }
         )
 
@@ -352,13 +322,13 @@ def build_prompt(
 
     prompt = f"""
 CUSTOMER:
-{customer_text[:1000]}
+{customer_text[:700]}
 
 CONTEXT:
-{context[:1000]}
+{context[:700]}
 
 DRAFT:
-{draft_reply[:700]}
+{draft_reply[:500]}
 
 HISTORICAL EVIDENCE:
 {evidence_text}
@@ -442,7 +412,6 @@ def main():
             + ", ".join(missing)
         )
 
-    # Limit to requested number.
     predictions = predictions.head(
         args.n
     )
@@ -536,10 +505,11 @@ def main():
     # --------------------------------------------------------
     # Judge
     # --------------------------------------------------------
+
     judge = GroqJudge(
-    max_tokens=400,
-    max_retries=1,
-)
+        max_tokens=32,
+        max_retries=0,
+    )
 
     results = list(
         existing_rows
@@ -558,7 +528,10 @@ def main():
             row["case_id"]
         )
 
-        # Resume support.
+        # ----------------------------------------------------
+        # Resume support
+        # ----------------------------------------------------
+
         if case_id in already_done:
 
             print(
@@ -646,9 +619,7 @@ def main():
                 f"{exc}"
             )
 
-            # Do NOT fabricate scores.
-            # Stop so we do not silently produce invalid
-            # judge data.
+            # Never fabricate judge scores.
             raise
 
         score["case_id"] = case_id
@@ -680,12 +651,15 @@ def main():
         )
 
     print()
+
     print(
-        f"Judge results saved to: {args.out}"
+        f"Judge results saved to: "
+        f"{args.out}"
     )
 
     print(
-        f"Total completed: {len(results)}"
+        f"Total completed: "
+        f"{len(results)}"
     )
 
 
