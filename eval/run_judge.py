@@ -131,7 +131,7 @@ class GroqJudge:
 
     def __init__(
         self,
-        max_tokens: int = 512,
+        max_tokens: int = 1024,
         max_retries: int = 0,
     ):
 
@@ -507,7 +507,7 @@ def main():
     # --------------------------------------------------------
 
     judge = GroqJudge(
-        max_tokens=512,
+        max_tokens=1024,
         max_retries=0,
     )
 

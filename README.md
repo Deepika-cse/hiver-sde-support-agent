@@ -822,11 +822,25 @@
 
 # 
 
-# During execution, 8 LLM-judge cases were successfully completed before the Groq token/day limit was reached. The human rating form was not populated because an independent human-rated validation sample was not completed.
+# During execution, 30 LLM-judge cases were successfully completed.
 
 # 
 
-# No judge score or judge-human agreement statistic is fabricated in this repository.
+# LLM-judge descriptive results (n=30):
+
+# - Groundedness: 3.70 / 5
+# - Helpfulness: 3.33 / 5
+# - Correctness: 4.80 / 5
+# - Tone: 4.23 / 5
+# - Overall: 3.70 / 5
+
+# 
+
+# These are descriptive LLM-judge scores only. The human rating form was not populated because an independent human-rated validation sample was not completed. Therefore, judge-human agreement and Cohen's kappa are not reported.
+
+# 
+
+# No judge-human agreement statistic is fabricated in this repository.
 
 # 
 
@@ -1149,6 +1163,3 @@
 # 
 
 # This makes the system more appropriate for real support operations than optimizing only for intent accuracy.
-
-
-
