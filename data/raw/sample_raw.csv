@@ -1,0 +1,25 @@
+tweet_id,author_id,inbound,created_at,text,response_tweet_id,in_response_to_tweet_id
+1,userc1,True,2026-01-01 12:00:00,Where is my order? It was supposed to arrive yesterday.,2,
+2,AmazonHelp,False,2026-01-01 12:00:00,Your tracking link shows the latest shipment status. Please check the tracking details.,,1
+3,userc2,True,2026-01-01 12:00:00,I was charged twice for the same order.,4,
+4,AmazonHelp,False,2026-01-01 12:00:00,We can help review duplicate charges. Please provide the order details through the support channel.,,3
+5,userc3,True,2026-01-01 12:00:00,I cannot log into my account.,6,
+6,AmazonHelp,False,2026-01-01 12:00:00,"Please use the account recovery flow. If that does not work, contact support for account-specific help.",,5
+7,userc4,True,2026-01-01 12:00:00,Can I get a refund for this order?,8,
+8,AmazonHelp,False,2026-01-01 12:00:00,We can review the order and refund eligibility. Please provide the order details.,,7
+9,userc5,True,2026-01-01 12:00:00,The product is not working.,10,
+10,AmazonHelp,False,2026-01-01 12:00:00,Sorry about that. Please share the product and the issue you are seeing so we can investigate.,,9
+11,userc6,True,2026-01-01 12:00:00,My package tracking has not updated.,12,
+12,AmazonHelp,False,2026-01-01 12:00:00,We can check the shipment status. Please share the order or tracking details.,,11
+13,userc7,True,2026-01-01 12:00:00,My account was hacked!,14,
+14,AmazonHelp,False,2026-01-01 12:00:00,"For account security concerns, please contact support through the secure account channel.",,13
+15,userc8,True,2026-01-01 12:00:00,I need to cancel my order.,16,
+16,AmazonHelp,False,2026-01-01 12:00:00,We can help review cancellation options. Please provide the order details.,,15
+17,userc9,True,2026-01-01 12:00:00,Why was I charged a fee?,18,
+18,AmazonHelp,False,2026-01-01 12:00:00,Please share the transaction details so the billing team can review the charge.,,17
+19,userc10,True,2026-01-01 12:00:00,The delivery says delivered but I don't have it.,20,
+20,AmazonHelp,False,2026-01-01 12:00:00,We can investigate a missing delivery. Please provide the order details.,,19
+21,userc11,True,2026-01-01 12:00:00,I forgot my password.,22,
+22,AmazonHelp,False,2026-01-01 12:00:00,Please use the password recovery process to regain access to your account.,,21
+23,userc12,True,2026-01-01 12:00:00,I want to return my purchase.,24,
+24,AmazonHelp,False,2026-01-01 12:00:00,We can help with the return process. Please provide the order details.,,23

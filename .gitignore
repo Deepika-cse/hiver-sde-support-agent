@@ -1,0 +1,55 @@
+# Python
+
+**pycache**/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Secrets
+
+.env
+
+# Large/raw data
+
+data/raw/*.csv
+data/raw/*.zip
+data/raw/**/*.csv
+data/raw/**/*.zip
+
+# Keep the tiny runnable sample dataset
+
+!data/raw/sample_raw.csv
+
+# Generated / processed data
+
+data/processed/*.csv
+
+# Generated results
+
+results/*.csv
+results/*.json
+results/evaluation/
+results/*.png
+
+# OS / editor
+
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Generated data/results
+data/processed/*.csv
+data/golden/*.csv
+results/*.csv
+results/*.json
+results/**/*.csv
+results/**/*.json
+results/evaluation/
+results/*.png
+results/**/*.png
+
+# Experimental golden-set files
+data/golden/gemini_test*.csv
+data/golden/fix_label.py

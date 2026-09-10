@@ -1,0 +1,65 @@
+# Final AmazonHelp intent taxonomy.
+# Defined from observed AmazonHelp conversations in the TWCS dataset.
+
+intents:
+  - id: order_issue
+    description: Problems with an order, including incorrect orders, order status, or problems after placing an order.
+    examples:
+      - "I have a problem with my order"
+      - "I need help with an order I placed"
+
+  - id: delivery_issue
+    description: Delivery delays, shipping status, expected delivery dates, tracking, or missing delivery deadlines.
+    examples:
+      - "My package is late"
+      - "Where is my order?"
+      - "I paid for delivery today but it did not arrive"
+
+  - id: package_not_received
+    description: The tracking says a package was delivered, but the customer says they did not receive it.
+    examples:
+      - "It says delivered but I never received it"
+      - "My package says delivered but it is not here"
+
+  - id: return_cancellation
+    description: Requests or problems involving returning a product or cancelling an order.
+    examples:
+      - "I want to cancel my order"
+      - "How do I return this item?"
+
+  - id: refund_payment
+    description: Refunds, missing refunds, incorrect charges, payment problems, or money-related issues.
+    examples:
+      - "When will I get my refund?"
+      - "I was charged twice"
+      - "I have not received my refund"
+
+  - id: prime_subscription
+    description: Amazon Prime membership, Prime trials, Prime charges, renewal, or subscription-related problems.
+    examples:
+      - "Why was I charged for Prime?"
+      - "I want to cancel my Prime membership"
+
+  - id: account_issue
+    description: Problems accessing or managing an Amazon account, including account information and account-related requests.
+    examples:
+      - "I cannot access my account"
+      - "I need help with my Amazon account"
+
+  - id: product_technical_issue
+    description: Problems with a product or Amazon device/service functionality, including technical or product-specific issues.
+    examples:
+      - "My Fire TV Stick is not working"
+      - "The product I received does not work"
+
+  - id: complaint_followup
+    description: An unresolved complaint, previous support interaction, escalation, or request for an update on an existing case.
+    examples:
+      - "I contacted customer service but my issue is still not resolved"
+      - "I was told this would be escalated but I have not heard back"
+
+  - id: other
+    description: A customer request that does not clearly fit any of the defined intents.
+    examples:
+      - "I need some help"
+      - "Can someone help me?"

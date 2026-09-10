@@ -1,0 +1,26 @@
+retrieval:
+  min_top_score: 0.18
+  strong_top_score: 0.45
+  min_evidence_items: 2
+  min_consistency: 0.10
+
+routing:
+  min_trust_for_auto_handle: 0.62
+  max_risk_for_auto_handle: 0.45
+
+risk_terms:
+  - hacked
+  - hacked account
+  - unauthorized
+  - stolen
+  - fraud
+  - scam
+  - chargeback
+  - lawsuit
+  - lawyer
+  - legal action
+  - police
+  - threat
+  - danger
+  - injury
+  - medical emergency
