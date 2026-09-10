@@ -288,7 +288,7 @@
 
 # 
 
-# However, \*\*judge-human validation is not reported as completed\*\*. The Groq provider reached its token/day limit during judge execution, and the human rating form has not yet been populated with an independent human-rated subset.
+# However, \*\*judge-human validation is not reported as completed\*\*. Eight LLM-judge cases were successfully evaluated before the Groq token/day limit was reached, but the human rating form was not populated with an independent human-rated subset.
 
 # 
 
@@ -549,6 +549,7 @@
 # 
 
 # The proposed AmazonHelp support agent substantially outperforms the trivial and lexical baselines on intent classification while achieving high escalation recall. Its main limitation is that historical similarity and intent confidence do not guarantee that a case can actually be resolved without account-specific investigation. The system is therefore best positioned as a conservative triage and drafting assistant today, with safer autonomous handling as the next engineering target.
+
 
 
 
